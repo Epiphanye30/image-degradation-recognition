@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import models
 
-from fake_dataloader import build_dataloaders
+from dataloader import build_dataloaders
 
 
 class DegradationClassifier(nn.Module):
@@ -90,7 +90,7 @@ def train_one_epoch(
     all_targets = []
 
     for batch in loader:
-        LQ, HQ, degra_tensor = batch
+        LQ, degra_tensor = batch
 
         LQ = LQ.to(device, non_blocking=True)
         degra_tensor = degra_tensor.float().to(device, non_blocking=True)
@@ -136,7 +136,7 @@ def validate_one_epoch(
     all_targets = []
 
     for batch in loader:
-        LQ, HQ, degra_tensor = batch
+        LQ, degra_tensor = batch
 
         LQ = LQ.to(device, non_blocking=True)
         degra_tensor = degra_tensor.float().to(device, non_blocking=True)
