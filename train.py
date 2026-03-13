@@ -1,5 +1,8 @@
 import os
 import argparse
+
+
+
 os.environ['HF_HOME'] = '/nfs2/users/yszhang/tool_checkpoints/huggingface'
 os.environ["TORCH_HOME"] = "/nfs2/users/yszhang/tool_checkpoints/huggingface"
 
@@ -12,7 +15,7 @@ parser.add_argument("--bs", type=int, default=64)
 parser.add_argument("--lr", type=float, default=1e-4)
 parser.add_argument("--weight_decay", type=float, default=1e-4)
 # parser.add_argument("--num_classes", type=int, default=7)
-parser.add_argument("--backbone", type=str, default="resnet18", choices=["resnet18", "resnet50"])
+parser.add_argument("--backbone", type=str, default="resnet18", choices=["resnet18", "resnet50", "resnet18_trunc2", "resnet18_trunc3"])
 parser.add_argument("--resume_path", type=str, default=None)
 parser.add_argument("--threshold", type=float, default=0.5)
 parser.add_argument("--seed", type=int, default=42)
@@ -20,7 +23,6 @@ parser.add_argument("--cuda_id", type=int, default=0)
 args = parser.parse_args()
 
 os.environ['CUDA_VISIBLE_DEVICES'] = str(args.cuda_id)
-device = "cuda"
 
 import time
 from typing import Dict, Tuple
@@ -30,8 +32,58 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchvision import models
+from tqdm import tqdm
 
 from dataloader import build_dataloaders
+
+
+class ResNet18Truncated(nn.Module):
+    def __init__(self, num_classes=7, depth=3, pretrained=True):
+        """
+        depth:
+            2 -> conv1 + layer1 + layer2
+            3 -> conv1 + layer1 + layer2 + layer3
+        """
+        super().__init__()
+
+        weights = models.ResNet18_Weights.DEFAULT if pretrained else None
+        base = models.resnet18(weights=weights)
+
+        if depth == 2:
+            self.features = nn.Sequential(
+                base.conv1,
+                base.bn1,
+                base.relu,
+                base.maxpool,
+                base.layer1,
+                base.layer2,
+            )
+            out_channels = 128
+
+        elif depth == 3:
+            self.features = nn.Sequential(
+                base.conv1,
+                base.bn1,
+                base.relu,
+                base.maxpool,
+                base.layer1,
+                base.layer2,
+                base.layer3,
+            )
+            out_channels = 256
+
+        else:
+            raise ValueError("depth must be 2 or 3")
+
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.classifier = nn.Linear(out_channels, num_classes)
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.pool(x)
+        x = torch.flatten(x, 1)
+        x = self.classifier(x)
+        return x
 
 
 class DegradationClassifier(nn.Module):
@@ -52,6 +104,12 @@ class DegradationClassifier(nn.Module):
             model.fc = nn.Linear(in_features, num_classes)
             self.model = model
 
+        elif backbone == "resnet18_trunc2":
+            self.model = ResNet18Truncated(num_classes, depth=2, pretrained=pretrained)
+
+        elif backbone == "resnet18_trunc3":
+            self.model = ResNet18Truncated(num_classes, depth=3, pretrained=pretrained)
+
         else:
             raise ValueError(f"Unsupported backbone: {backbone}")
 
@@ -70,7 +128,9 @@ class DegradationClassifier(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
-
+    
+def count_trainable_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 @torch.no_grad()
 def multilabel_metrics_from_logits(
@@ -124,7 +184,9 @@ def train_one_epoch(
     all_logits = []
     all_targets = []
 
-    for batch in loader:
+    progress_bar = tqdm(loader, desc="Train", leave=False)
+
+    for batch in progress_bar:
         LQ, degra_tensor = batch
 
         LQ = LQ.to(device, non_blocking=True)
@@ -144,6 +206,8 @@ def train_one_epoch(
 
         all_logits.append(logits.detach())
         all_targets.append(degra_tensor.detach())
+
+        progress_bar.set_postfix(loss=f"{loss.item():.4f}")
 
     all_logits = torch.cat(all_logits, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
@@ -170,7 +234,9 @@ def validate_one_epoch(
     all_logits = []
     all_targets = []
 
-    for batch in loader:
+    progress_bar = tqdm(loader, desc="Val", leave=False)
+
+    for batch in progress_bar:
         LQ, degra_tensor = batch
 
         LQ = LQ.to(device, non_blocking=True)
@@ -186,6 +252,8 @@ def validate_one_epoch(
         all_logits.append(logits)
         all_targets.append(degra_tensor)
 
+        progress_bar.set_postfix(loss=f"{loss.item():.4f}")
+
     all_logits = torch.cat(all_logits, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
 
@@ -196,7 +264,43 @@ def validate_one_epoch(
 
 def set_seed(seed: int = 42):
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def count_parameters(model: nn.Module) -> Tuple[int, int]:
+    total_params = sum(param.numel() for param in model.parameters())
+    trainable_params = sum(param.numel() for param in model.parameters() if param.requires_grad)
+    return total_params, trainable_params
+
+
+def print_run_info(
+    train_loader: DataLoader,
+    val_loaders: list,
+    model: nn.Module,
+    device: torch.device,
+):
+    print("\n===== Run Configuration =====")
+    print(f"Device: {device}")
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"Visible CUDA devices: {torch.cuda.device_count()}")
+        print(f"Current CUDA device: {torch.cuda.current_device()}")
+        print(f"GPU name: {torch.cuda.get_device_name(torch.cuda.current_device())}")
+    else:
+        print("GPU name: N/A (running on CPU)")
+
+    total_params, trainable_params = count_parameters(model)
+    print(f"Backbone: {args.backbone}")
+    print(f"Resume checkpoint: {args.resume_path or 'None'}")
+    print(f"Epochs: {args.epochs}, batch size: {args.bs}, lr: {args.lr}, weight decay: {args.weight_decay}")
+    print(f"Threshold: {args.threshold}, seed: {args.seed}")
+    print(f"Train samples: {len(train_loader.dataset)}, train batches: {len(train_loader)}")
+    print(f"Validation loaders: {len(val_loaders)}")
+    for i, val_loader in enumerate(val_loaders):
+        print(f"Val[{i}] samples: {len(val_loader.dataset)}, batches: {len(val_loader)}")
+    print(f"Model parameters: total={total_params:,}, trainable={trainable_params:,}")
+    print("=============================\n")
 
 
 def save_checkpoint(
@@ -232,6 +336,7 @@ def print_metrics(prefix: str, metrics: Dict[str, float]):
 
 def main():
     set_seed(args.seed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_loader, val_loaders = build_dataloaders(args)
 
@@ -242,6 +347,13 @@ def main():
         resume_path=args.resume_path,
     ).to(device)
 
+    print_run_info(
+        train_loader=train_loader,
+        val_loaders=val_loaders,
+        model=model,
+        device=device,
+    )
+
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -251,6 +363,7 @@ def main():
 
     for epoch in range(1, args.epochs + 1):
         start_time = time.time()
+        print(f"Epoch [{epoch}/{args.epochs}]")
 
         train_metrics = train_one_epoch(
             model=model,
@@ -300,7 +413,7 @@ def main():
             print(f"Saved new best checkpoint to: {best_ckpt_path}")
 
         elapsed = time.time() - start_time
-        print(f"\nEpoch [{epoch}/{args.epochs}] - {elapsed:.1f}s")
+        print(f"Epoch [{epoch}/{args.epochs}] finished in {elapsed:.1f}s\n")
 
     print("\nTraining finished.")
     print(f"Best val micro-F1: {best_val_f1:.4f}")
