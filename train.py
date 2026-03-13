@@ -1,6 +1,28 @@
 import os
-import time
 import argparse
+os.environ['HF_HOME'] = '/nfs2/users/yszhang/tool_checkpoints/huggingface'
+os.environ["TORCH_HOME"] = "/nfs2/users/yszhang/tool_checkpoints/huggingface"
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--train_parquet", nargs="+", required=True)
+parser.add_argument("--val_parquet", nargs="+", required=True)
+parser.add_argument("--save_dir", type=str, default="./checkpoints")
+parser.add_argument("--epochs", type=int, default=10)
+parser.add_argument("--bs", type=int, default=64)
+parser.add_argument("--lr", type=float, default=1e-4)
+parser.add_argument("--weight_decay", type=float, default=1e-4)
+# parser.add_argument("--num_classes", type=int, default=7)
+parser.add_argument("--backbone", type=str, default="resnet18", choices=["resnet18", "resnet50"])
+parser.add_argument("--resume_path", type=str, default=None)
+parser.add_argument("--threshold", type=float, default=0.5)
+parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--cuda_id", type=int, default=0)
+args = parser.parse_args()
+
+os.environ['CUDA_VISIBLE_DEVICES'] = str(args.cuda_id)
+device = "cuda"
+
+import time
 from typing import Dict, Tuple
 
 import torch
@@ -13,7 +35,7 @@ from dataloader import build_dataloaders
 
 
 class DegradationClassifier(nn.Module):
-    def __init__(self, num_classes: int = 7, backbone: str = "resnet18", pretrained: bool = True):
+    def __init__(self, num_classes: int = 7, backbone: str = "resnet18", pretrained: bool = True, resume_path: str = None):
         super().__init__()
 
         if backbone == "resnet18":
@@ -32,6 +54,19 @@ class DegradationClassifier(nn.Module):
 
         else:
             raise ValueError(f"Unsupported backbone: {backbone}")
+
+        if resume_path is not None:
+            print(f"Loading checkpoint from {resume_path}")
+            
+            checkpoint = torch.load(resume_path, map_location="cpu")
+            state_dict = checkpoint["model_state_dict"]
+            state_dict = {
+                k.replace("model.", ""): v
+                for k, v in state_dict.items()
+            }
+            self.model.load_state_dict(state_dict)
+
+            print("Checkpoint loaded.")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -196,29 +231,15 @@ def print_metrics(prefix: str, metrics: Dict[str, float]):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--save_dir", type=str, default="./checkpoints")
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--num_classes", type=int, default=7)
-    parser.add_argument("--backbone", type=str, default="resnet18", choices=["resnet18", "resnet50"])
-    parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", type=str, default="cuda")
-    args = parser.parse_args()
-
     set_seed(args.seed)
 
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
-    train_loader, val_loader = build_dataloaders(args)
+    train_loader, val_loaders = build_dataloaders(args)
 
     model = DegradationClassifier(
         num_classes=args.num_classes,
         backbone=args.backbone,
         pretrained=True,
+        resume_path=args.resume_path,
     ).to(device)
 
     criterion = nn.BCEWithLogitsLoss()
@@ -240,19 +261,23 @@ def main():
             threshold=args.threshold,
         )
 
-        val_metrics = validate_one_epoch(
-            model=model,
-            loader=val_loader,
-            criterion=criterion,
-            device=device,
-            threshold=args.threshold,
-        )
+        val_metrics_list = []
 
-        elapsed = time.time() - start_time
-
-        print(f"\nEpoch [{epoch}/{args.epochs}] - {elapsed:.1f}s")
         print_metrics("Train", train_metrics)
-        print_metrics("Val  ", val_metrics)
+
+        for i, val_loader in enumerate(val_loaders):
+
+            val_metrics = validate_one_epoch(
+                model=model,
+                loader=val_loader,
+                criterion=criterion,
+                device=device,
+                threshold=args.threshold,
+            )
+
+            val_metrics_list.append(val_metrics)
+
+            print_metrics(f"Val[{i}]", val_metrics)
 
         save_checkpoint(
             save_path=last_ckpt_path,
@@ -262,8 +287,9 @@ def main():
             best_val_f1=best_val_f1,
         )
 
-        if val_metrics["micro_f1"] > best_val_f1:
-            best_val_f1 = val_metrics["micro_f1"]
+        mean_val_f1 = sum(v["micro_f1"] for v in val_metrics_list) / len(val_metrics_list)
+        if mean_val_f1 > best_val_f1:
+            best_val_f1 = mean_val_f1
             save_checkpoint(
                 save_path=best_ckpt_path,
                 model=model,
@@ -272,6 +298,9 @@ def main():
                 best_val_f1=best_val_f1,
             )
             print(f"Saved new best checkpoint to: {best_ckpt_path}")
+
+        elapsed = time.time() - start_time
+        print(f"\nEpoch [{epoch}/{args.epochs}] - {elapsed:.1f}s")
 
     print("\nTraining finished.")
     print(f"Best val micro-F1: {best_val_f1:.4f}")
