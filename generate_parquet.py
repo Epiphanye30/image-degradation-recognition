@@ -3,49 +3,35 @@ import random
 import pandas as pd
 from tqdm import tqdm
 
-DATASET_DIR = "datasets"
-LQ_ROOT = "/root/pubdatasets2/imagenet/MDC/LQ"
-HQ_ROOT = "/root/pubdatasets2/imagenet/MDC/HQ"
-D_LEVELS = ["d2", "d3"]
-OUTPUT_PARQUET = os.path.join(DATASET_DIR, "mdc_dataset.parquet")
-SAMPLES_PER_DEG = 500
+LQ_ROOT = "./dataset/foundir-v1" # or "./dataset/mdc"
+OUTPUT_PARQUET = "foundir_dataset.parquet" # or "mdc_dataset.parquet"
+SAMPLES_PER_DEG = 50
 
 
 def collect_lq_images():
     samples = []
 
-    for d in D_LEVELS:
-        d_root = os.path.join(LQ_ROOT, d)
+    for deg_str in os.listdir(LQ_ROOT):
+        deg_path = os.path.join(LQ_ROOT, deg_str, "LQ")
 
-        for degradation in os.listdir(d_root):
-            deg_path = os.path.join(d_root, degradation)
+        if not os.path.isdir(deg_path):
+            continue
 
-            if not os.path.isdir(deg_path):
-                continue
+        image_list = []
 
-            image_list = []
+        for img in os.listdir(deg_path):
+            lq_path = os.path.join(deg_path, img)
+            image_list.append((lq_path, deg_str))
 
-            for cls in os.listdir(deg_path):
-                cls_path = os.path.join(deg_path, cls)
-
-                if not os.path.isdir(cls_path):
-                    continue
-
-                for img in os.listdir(cls_path):
-                    lq_path = os.path.join(cls_path, img)
-                    image_list.append((lq_path, degradation))
-
-            random.shuffle(image_list)
-            samples.extend(image_list[:SAMPLES_PER_DEG])
+        random.shuffle(image_list)
+        samples.extend(image_list[:SAMPLES_PER_DEG])
 
     return samples
 
 
 def generate_parquet():
-
     samples = collect_lq_images()
     rows = []
-    os.makedirs(os.path.dirname(OUTPUT_PARQUET), exist_ok=True)
 
     for lq_path, degradation in tqdm(samples):
         with open(lq_path, "rb") as f:
