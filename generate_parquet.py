@@ -3,8 +3,8 @@ import random
 import pandas as pd
 from tqdm import tqdm
 
-LQ_ROOT = "./dataset/foundir-v1" # or "./dataset/mdc"
-OUTPUT_PARQUET = "foundir_dataset.parquet" # or "mdc_dataset.parquet"
+LQ_ROOT = "./datasets/foundir-v1" # or "./dataset/mdc"
+OUTPUT_PARQUET = "./datasets/foundir_dataset.parquet" # or "mdc_dataset.parquet"
 SAMPLES_PER_DEG = 50
 
 
