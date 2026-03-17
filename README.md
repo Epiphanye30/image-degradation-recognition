@@ -23,19 +23,37 @@ pip install -r requirements.txt
 
 ## Data Preparation
 
-1. Generate the parquet dataset:
+### 1. Prepare Data
+
+Download the **ImageNet** dataset and the **FoundIR-V1** test set. For the ImageNet dataset, synthesize the Low-Quality (LQ) images following the instructions in [AgenticIR/dataset](https://github.com/Kaiwen-Zhu/AgenticIR/tree/main/dataset).
+
+Organize the datasets according to the following directory structure:
+
+```text
+datasets/
+├── mdc/                          # ImageNet-based Multi-Degradation Corpus
+│   ├── noise+rain/
+│   ├── motion_blur+jpeg/
+│   └── ...                       # Other degradation combinations
+└── foundir/                      # FoundIR-V1 dataset
+    ├── dark+noise/
+    ├── noise+haze/
+    └── ...
+```
+
+2. Generate the parquet dataset:
 
 ```bash
 python generate_parquet.py
 ```
 
-2. Split the dataset into training and validation sets:
+3. Split the dataset into training and validation sets:
 
 ```bash
 python split_parquet.py --input datasets/mdc_dataset.parquet --train_out datasets/train.parquet --val_out datasets/val.parquet
 ```
 
-3. Preview random samples:
+4. Preview random samples:
 
 ```bash
 python preview_parquet.py --parquet datasets/train.parquet --num_samples 6 --save_path figures/data_preview.png
