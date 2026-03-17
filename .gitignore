@@ -1,0 +1,41 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.python-version
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local datasets, checkpoints, and generated figures
+datasets/
+checkpoints/
+figures/
+*.parquet
+*.pt
+
+# Logs and local outputs
+*.log
+*.zip
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz
+*.toc
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+
+preview_parquet.py
+*.tex
+test.ipynb
+fake_dataloader.py
+results.md

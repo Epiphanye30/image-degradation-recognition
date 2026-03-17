@@ -3,10 +3,11 @@ import random
 import pandas as pd
 from tqdm import tqdm
 
+DATASET_DIR = "datasets"
 LQ_ROOT = "/root/pubdatasets2/imagenet/MDC/LQ"
 HQ_ROOT = "/root/pubdatasets2/imagenet/MDC/HQ"
 D_LEVELS = ["d2", "d3"]
-OUTPUT_PARQUET = "mdc_dataset.parquet"
+OUTPUT_PARQUET = os.path.join(DATASET_DIR, "mdc_dataset.parquet")
 SAMPLES_PER_DEG = 500
 
 
@@ -44,6 +45,7 @@ def generate_parquet():
 
     samples = collect_lq_images()
     rows = []
+    os.makedirs(os.path.dirname(OUTPUT_PARQUET), exist_ok=True)
 
     for lq_path, degradation in tqdm(samples):
         with open(lq_path, "rb") as f:
