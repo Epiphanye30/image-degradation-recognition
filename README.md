@@ -16,8 +16,8 @@ This repository contains code for training image degradation classifiers from pa
 Python 3.10 or 3.11 is recommended.
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+conda create -n ece176 python=3.11
+conda activate ece176
 pip install -r requirements.txt
 ```
 
