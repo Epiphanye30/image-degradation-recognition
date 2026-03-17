@@ -39,3 +39,4 @@ preview_parquet.py
 test.ipynb
 fake_dataloader.py
 results.md
+__pycache__/
